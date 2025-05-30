@@ -3,6 +3,7 @@ defmodule JswatchWeb.ClockManager do
 
   @working_tick_interval 1_000   # 1 segundo
   @blink_interval         250   # 250 ms para parpadeo
+  @edit_max_count         20    # 20 ciclos de parpadeo = 5s timeout
 
   # --------------------------------------------------
   # Inicialización
@@ -86,22 +87,39 @@ defmodule JswatchWeb.ClockManager do
   end
 
   # --------------------------------------------------
-  # Parpadeo en modo :editing
+  # Parpadeo en modo :editing con timeout
   # --------------------------------------------------
   def handle_info(:editing_blink,
-      %{st: :editing, ui_pid: ui, time: t0, selection: sel, show: sh, count: cnt} = state) do
-    new_show    = not sh
-    new_count   = cnt + 1
-    display     = format(t0, sel, new_show)
-    GenServer.cast(ui, {:set_time_display, display})
-    blink_timer = Process.send_after(self(), :editing_blink, @blink_interval)
+      %{st: :editing, ui_pid: ui, time: t_cur, selection: sel, show: sh, count: cnt, timer: old_timer} = state) do
+    Process.cancel_timer(old_timer)
+    next_count = cnt + 1
 
-    {:noreply,
-     %{state |
-       show:  new_show,
-       count: new_count,
-       timer: blink_timer
-     }}
+    if next_count < @edit_max_count do
+      new_show    = not sh
+      display     = format(t_cur, sel, new_show)
+      GenServer.cast(ui, {:set_time_display, display})
+
+      blink_timer = Process.send_after(self(), :editing_blink, @blink_interval)
+      {:noreply,
+       %{state |
+         show:  new_show,
+         count: next_count,
+         timer: blink_timer
+       }}
+    else
+      full_display = Time.truncate(t_cur, :second) |> Time.to_string()
+      GenServer.cast(ui, {:set_time_display, full_display})
+
+      timer = Process.send_after(self(), :working_working, @working_tick_interval)
+      {:noreply,
+       %{state |
+         st:        :working,
+         timer:     timer,
+         selection: nil,
+         show:      false,
+         count:     0
+       }}
+    end
   end
 
   # --------------------------------------------------
@@ -110,7 +128,7 @@ defmodule JswatchWeb.ClockManager do
   def handle_info(:"bottom-right-pressed",
       %{st: :editing, ui_pid: ui, time: t0, selection: sel, timer: old_timer} = state) do
     Process.cancel_timer(old_timer)
-    new_sel     = case sel do
+    new_sel = case sel do
       :hour   -> :minute
       :minute -> :second
       :second -> :hour
@@ -132,19 +150,19 @@ defmodule JswatchWeb.ClockManager do
   # Incremento en modo :editing
   # --------------------------------------------------
   def handle_info(:"bottom-left-pressed",
-      %{st: :editing, ui_pid: ui, time: t0, selection: sel, timer: old_timer} = state) do
+      %{st: :editing, ui_pid: ui, time: t_cur, selection: sel, timer: old_timer} = state) do
     Process.cancel_timer(old_timer)
-    new_time    = increase_selection(t0, sel)
+    new_time    = increase_selection(t_cur, sel)
     display     = format(new_time, sel, true)
     blink_timer = Process.send_after(self(), :editing_blink, @blink_interval)
     GenServer.cast(ui, {:set_time_display, display})
 
     {:noreply,
      %{state |
-       time:  new_time,
-       show:  true,
-       count: 0,
-       timer: blink_timer
+       time:      new_time,
+       show:      true,
+       count:     0,
+       timer:     blink_timer
      }}
   end
 
@@ -164,7 +182,7 @@ defmodule JswatchWeb.ClockManager do
   end
 
   defp pad(n) when n < 10, do: "0#{n}"
-  defp pad(n),            do: "#{n}"
+  defp pad(n), do: "#{n}"
 
   defp increase_selection(%Time{hour: h} = t, :hour),   do: %Time{t | hour: rem(h + 1, 24)}
   defp increase_selection(%Time{minute: m} = t, :minute), do: %Time{t | minute: rem(m + 1, 60)}
