@@ -130,21 +130,15 @@ defmodule JswatchWeb.ClockManager do
   # --------------------------------------------------
   def handle_info(:"bottom-left-pressed",
       %{st: :alarm_editing, ui_pid: ui, alarm: a, alarm_sel: sel, timer: old_timer} = state) do
-    # 1) Cancelamos el timer de parpadeo
     Process.cancel_timer(old_timer)
-
-    # 2) Calculamos la siguiente selección
     new_sel = case sel do
       :hour   -> :minute
       :minute -> :second
       :second -> :hour
     end
 
-    # 3) Enviamos el display con el campo recién seleccionado visible
     display     = format(a, new_sel, true)
     GenServer.cast(ui, {:set_time_display, display})
-
-    # 4) Reprogramamos el parpadeo y reseteamos el contador
     blink_timer = Process.send_after(self(), :alarm_blink, @blink_interval)
 
     {:noreply,
@@ -155,6 +149,32 @@ defmodule JswatchWeb.ClockManager do
       timer:       blink_timer
     }}
   end
+
+  # --------------------------------------------------
+# Incremento en modo :alarm_editing (bottom-right)
+# --------------------------------------------------
+def handle_info(:"bottom-right-pressed",
+    %{st: :alarm_editing, ui_pid: ui, alarm: a, alarm_sel: sel, timer: old_timer} = state) do
+  # 1) Cancelamos el timer de parpadeo
+  Process.cancel_timer(old_timer)
+
+  # 2) Incrementamos la parte seleccionada de la alarma
+  new_alarm   = increase_selection(a, sel)
+
+  # 3) Mostramos el nuevo valor con el campo visible
+  display     = format(new_alarm, sel, true)
+  GenServer.cast(ui, {:set_time_display, display})
+
+  # 4) Reiniciamos blink y contador
+  blink_timer = Process.send_after(self(), :alarm_blink, @blink_interval)
+  {:noreply,
+   %{state |
+     alarm:       new_alarm,
+     alarm_show:  true,
+     alarm_count: 0,
+     timer:       blink_timer
+   }}
+end
 
 
   # --------------------------------------------------
