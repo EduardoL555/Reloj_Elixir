@@ -41,6 +41,23 @@ defmodule JswatchWeb.StopwatchManager do
     {:noreply, %{state | elapsed: 0}}
   end
 
+    # --------------------------------------------------
+  # 4b) Reset mientras corre (bottom-left-released en modo cronómetro y running: true)
+  # --------------------------------------------------
+  def handle_info(:"bottom-left-released", %{ui_pid: pid, mode: :stopwatch, running: true, timer: timer} = state) do
+    # Cancelamos el timer actual
+    if timer, do: Process.cancel_timer(timer)
+
+    # Reiniciamos elapsed a 0 y enviamos 00:00:00 al UI
+    GenServer.cast(pid, {:set_stopwatch_display, format_elapsed(0)})
+
+    # Volvemos a programar el tick para seguir contando desde 0
+    new_timer = Process.send_after(self(), :tick, 10)
+
+    {:noreply, %{state | elapsed: 0, timer: new_timer, running: true}}
+  end
+
+
   # Catch-all
   def handle_info(_event, state), do: {:noreply, state}
 
